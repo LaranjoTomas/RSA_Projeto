@@ -36,6 +36,11 @@ docker-compose up
 - Flask-SocketIO
 - Flask-Cors
 
+## Install dependencies
+```bash
+npm install leaflet react-leaflet
+
+```
 ## Start Backend
 ```bash
 cd dashboard
