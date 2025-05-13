@@ -1,0 +1,24 @@
+/* Fonte Poppins */
+body {
+  font-family: 'Poppins', sans-serif;
+  background-color: #f0f4f8;
+}
+
+/* .gauge e .gauge-value vindo do seu CSS */
+.gauge {
+  position: relative;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.gauge-value {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-weight: bold;
+}
+
+/* hover cards e status transitions */
+.recommendation-card { transition: all 0.3s ease; }
+.recommendation-card:hover { transform: translateY(-5px); }
+.connection-status { transition: all 0.3s ease; }
