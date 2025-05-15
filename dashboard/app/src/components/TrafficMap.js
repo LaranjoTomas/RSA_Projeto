@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Marker } from 'react-leaflet';
+import { MapContainer, CircleMarker, Polygon, Polyline, Marker } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -46,6 +46,9 @@ const VehicleMarker = ({ position, vehicle }) => {
 };
 
 const TrafficMap = () => {
+  const [data, setData] = useState(null);
+  const [vanetzaVehicles, setVanetzaVehicles] = useState([]);
+  const [vanetzaEvents, setVanetzaEvents] = useState([]);
   const [trafficData, setTrafficData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -75,15 +78,75 @@ const TrafficMap = () => {
         setTrafficData(data);
         setLoading(false);
       } catch (err) {
-        setError(err.message);
+        console.error("Error fetching traffic data:", err);
+        // Don't set loading to false on error if we're still waiting for data
+        // Instead, initialize with empty data
+        setTrafficData({
+          vehicles: [],
+          traffic_lights: [],
+          emergency_mode: false,
+          center: { lat: 40.6329, lng: -8.6585 }
+        });
         setLoading(false);
       }
     };
 
     fetchData();
-    const intervalId = setInterval(fetchData, 1000);
+    const trafficInterval = setInterval(fetchData, 1000);
+
+    const fetchVanetzaData = async () => {
+    try {
+      const response = await fetch(`${serverUrl}/api/vanetza_messages`);
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+      const data = await response.json();
+      
+      // Process CAM messages to show vehicles
+      if (data.cam && data.cam.length > 0) {
+        const vehicles = data.cam.map(msg => ({
+          id: msg.stationID,
+          position: {
+            lat: msg.latitude,
+            lng: msg.longitude
+          },
+          heading: msg.heading,
+          speed: msg.speed,
+          type: msg.stationType === 5 ? 'vehicle' : 'rsu'
+        }));
+        
+        // Update your state with these vehicles
+        setVanetzaVehicles(vehicles);
+      }
+      
+      // Process DENM messages for events
+      if (data.denm && data.denm.length > 0) {
+        // Extract events from DENM messages
+        const events = data.denm.map(msg => ({
+          id: msg.eventID,
+          position: {
+            lat: msg.latitude,
+            lng: msg.longitude
+          },
+          type: msg.eventType,
+          description: msg.description
+        }));
+        // Update your state with these events
+        setVanetzaEvents(events);
+      }
+      
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+    fetchVanetzaData();
+    const vanetzaInterval = setInterval(fetchVanetzaData, 1000);
     
-    return () => clearInterval(intervalId);
+    return () => {
+      clearInterval(trafficInterval);
+      clearInterval(vanetzaInterval);
+    };
   }, [serverUrl]);
 
   const triggerEmergency = async (active = true) => {
@@ -136,8 +199,15 @@ const TrafficMap = () => {
   };
 
   if (loading) return <div>Loading traffic data...</div>;
-  if (error) return <div>Error: {error}</div>;
-  if (!trafficData) return <div>No traffic data available</div>;
+  if (error && !trafficData) return <div>Error: {error}</div>;
+
+  const trafficDataToUse = trafficData || {
+    vehicles: [],
+    traffic_lights: [],
+    emergency_mode: false,
+    center: { lat: mapCenter[0], lng: mapCenter[1] }
+  };
+
 
   // Center of the intersection
   const center = mapCenter;
@@ -202,7 +272,8 @@ const TrafficMap = () => {
   ];
 
   // Get emergency state
-  const isEmergencyMode = trafficData.emergency_mode;
+  // const isEmergencyMode = trafficData.emergency_mode;
+  const isEmergencyMode = trafficDataToUse.emergency_mode;
 
   return (
     <div className="traffic-map-container">
@@ -296,11 +367,24 @@ const TrafficMap = () => {
           ))}
           
           {/* Draw vehicles */}
-          {trafficData.vehicles.map(vehicle => (
+          {trafficDataToUse.vehicles.map(vehicle => (
             <VehicleMarker
               key={vehicle.id}
               position={[vehicle.position.lat, vehicle.position.lng]}
               vehicle={vehicle}
+            />
+          ))}
+
+          {/* Draw vehicles from Vanetza data */}
+          {vanetzaVehicles.map(vehicle => (
+            <VehicleMarker
+              key={`vanetza-${vehicle.id}`}
+              position={[vehicle.position.lat, vehicle.position.lng]}
+              vehicle={{
+                ...vehicle,
+                heading: vehicle.heading || 0,
+                type: vehicle.type === 'emergency' ? 'ambulance' : 'car'
+              }}
             />
           ))}
         </MapContainer>

@@ -8,6 +8,7 @@ import math
 import threading
 import logging
 import requests
+import paho.mqtt.client as mqtt
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -18,23 +19,112 @@ CORS(app)
 
 # Intersection configuration
 INTERSECTION_RADIUS = 15  # meters
-LANE_WIDTH = 3.5  # meters
+LANE_WIDTH = 2.0 # meters
 
-# Convert GPS coordinates to meters (rough approximation for small areas)
-def gps_to_meters(lat1, lng1, lat2, lng2):
+vanetza_messages = {
+    'cam': [],
+    'denm': [],
+    'spatem': [],
+    'mapem': [],
+    'cpm': [],
+    'vam': []
+}
+
+def setup_mqtt_client():
+    client = mqtt.Client()
+    
+    def on_connect(client, userdata, flags, rc):
+        logger.info("Connected to MQTT broker with result code " + str(rc))
+        # Subscribe to all Vanetza output topics
+        client.subscribe("vanetza/out/#")
+    
+    def on_message(client, userdata, msg):
+        try:
+            topic = msg.topic
+            message_type = topic.split('/')[-1]  # Extract message type from topic
+            
+            # Store messages by type
+            if message_type in vanetza_messages:
+                data = json.loads(msg.payload.decode())
+                
+                # Store only the last N messages (limit size)
+                max_msgs = 100
+                vanetza_messages[message_type].append(data)
+                if len(vanetza_messages[message_type]) > max_msgs:
+                    vanetza_messages[message_type].pop(0)
+                
+                logger.info(f"Received {message_type} message")
+        except Exception as e:
+            logger.error(f"Error processing MQTT message: {str(e)}")
+    
+    client.on_connect = on_connect
+    client.on_message = on_message
+    
+    try:
+        # Try local connection first
+        client.connect("127.0.0.1", 1883, 60)
+        
+        # Start the MQTT client in a background thread
+        mqtt_thread = threading.Thread(target=client.loop_forever)
+        mqtt_thread.daemon = True
+        mqtt_thread.start()
+        logger.info("MQTT client started successfully")
+    except Exception as e:
+        logger.error(f"Failed to connect to MQTT broker: {str(e)}")
+        try:
+            client.connect("192.168.98.20", 1883, 60)
+            
+            mqtt_thread = threading.Thread(target=client.loop_forever)
+            mqtt_thread.daemon = True
+            mqtt_thread.start()
+            logger.info("MQTT client started successfully using Docker network")
+        except Exception as e2:
+            logger.error(f"Failed to connect to MQTT broker via Docker network: {str(e2)}")
+
+
+# Convert GPS coordinates to meters
+def gps_to_meters(lat1, lon1, lat2, lon2):
+    """Calculate distance between two GPS points in meters"""
     R = 6371000  # Earth radius in meters
-    lat1_rad = math.radians(lat1)
-    lat2_rad = math.radians(lat2)
-    dlat = math.radians(lat2 - lat1)
-    dlng = math.radians(lng2 - lng1)
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
     
-    a = math.sin(dlat/2) * math.sin(dlat/2) + \
-        math.cos(lat1_rad) * math.cos(lat2_rad) * \
-        math.sin(dlng/2) * math.sin(dlng/2)
+    a = (math.sin(delta_phi/2) * math.sin(delta_phi/2) + 
+         math.cos(phi1) * math.cos(phi2) * 
+         math.sin(delta_lambda/2) * math.sin(delta_lambda/2))
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-    distance = R * c
     
-    return distance
+    return R * c
+
+def local_to_gps(x, y, center_lat, center_lng):
+    """Convert local coordinates to GPS coordinates"""
+    # Earth's radius in meters
+    R = 6371000
+    
+    # Calculate latitude change
+    lat_change = (y / R) * (180 / math.pi)
+    # Calculate longitude change (accounting for latitude)
+    lng_change = (x / R) * (180 / math.pi) / math.cos(math.radians(center_lat))
+    
+    return {
+        'lat': center_lat + lat_change,
+        'lng': center_lng + lng_change
+    }
+
+def gps_to_local(lat, lng, center_lat, center_lng):
+    """Convert GPS coordinates to local XY coordinates with center at (0,0)"""
+    # Earth's radius in meters
+    R = 6371000
+    
+    # Calculate x (longitude) change
+    x = math.cos(math.radians(center_lat)) * R * math.radians(lng - center_lng)
+    
+    # Calculate y (latitude) change 
+    y = R * math.radians(lat - center_lat)
+    
+    return (x, y)
 
 # Traffic light states
 traffic_data = {
@@ -75,24 +165,58 @@ traffic_data = {
         {
             'id': 'v_1',
             'type': 'car',
-            'position': {'lat': 40.6335, 'lng': -8.6586}, # Offset to right side of road
+            'position': {'lat': 40.6360, 'lng': -8.6586}, 
             'heading': 180,  # Heading in degrees (0=North, 90=East, 180=South, 270=West)
-            'speed': 30,
+            'speed': 80,
             'waiting': False
         },
         {
             'id': 'v_2',
             'type': 'ambulance',
-            'position': {'lat': 40.6325, 'lng': -8.6579}, # Offset to right side of road
+            'position': {'lat': 40.6325, 'lng': -8.6550}, 
             'heading': 270,  # Heading west
-            'speed': 40,
-            'emergency': False,
+            'speed': 90,
+            'emergency': True,
             'denm_sent': False,
             'waiting': False
         }
     ],
     'emergency_mode': False,
     'emergency_vehicle': None
+}
+
+# Road network model
+road_network = {
+    'intersection': {
+        'center': {'x': 0, 'y': 0},  # Local coordinates (0,0)
+        'radius': INTERSECTION_RADIUS
+    },
+    'lanes': {
+        'north': {
+            'start': {'x': 0, 'y': -50},  # 50m south of center
+            'end': {'x': 0, 'y': 50},     # 50m north of center
+            'width': LANE_WIDTH,
+            'direction': 0  # Degrees (North)
+        },
+        'east': {
+            'start': {'x': -50, 'y': 0},  # 50m west of center
+            'end': {'x': 50, 'y': 0},     # 50m east of center
+            'width': LANE_WIDTH,
+            'direction': 90  # Degrees (East)
+        },
+        'south': {
+            'start': {'x': 0, 'y': 50},   # 50m north of center
+            'end': {'x': 0, 'y': -50},    # 50m south of center
+            'width': LANE_WIDTH,
+            'direction': 180  # Degrees (South)
+        },
+        'west': {
+            'start': {'x': 50, 'y': 0},   # 50m east of center
+            'end': {'x': -50, 'y': 0},    # 50m west of center
+            'width': LANE_WIDTH,
+            'direction': 270  # Degrees (West)
+        }
+    }
 }
 
 # Normal traffic light cycle
@@ -391,6 +515,9 @@ def update_vehicle_positions():
     
     for vehicle in traffic_data['vehicles']:
         # Update position based on heading
+
+        local_pos = gps_to_local(vehicle['position']['lat'], vehicle['position']['lng'], center['lat'], center['lng'])
+
         heading = vehicle['heading']
         
         # Get the traffic light for this direction
@@ -476,5 +603,47 @@ def get_config():
     }
     return jsonify(config)
 
+@app.route('/api/road_network', methods=['GET'])
+def get_road_network():
+    """Return the road network model with GPS coordinates"""
+    center_gps = traffic_data['center']
+    
+    # Convert local road network to GPS coordinates
+    gps_road_network = {
+        'intersection': {
+            'center': center_gps,
+            'radius': INTERSECTION_RADIUS
+        },
+        'lanes': {}
+    }
+    
+    for name, lane in road_network['lanes'].items():
+        start_gps = local_to_gps(lane['start']['x'], lane['start']['y'], 
+                               center_gps['lat'], center_gps['lng'])
+        end_gps = local_to_gps(lane['end']['x'], lane['end']['y'], 
+                             center_gps['lat'], center_gps['lng'])
+        
+        gps_road_network['lanes'][name] = {
+            'start': start_gps,
+            'end': end_gps,
+            'width': lane['width'],
+            'direction': lane['direction']
+        }
+    
+    return jsonify(gps_road_network)
+
+@app.route('/api/vanetza_messages', methods=['GET'])
+def get_vanetza_messages():
+    message_type = request.args.get('type', 'all')
+    
+    if message_type == 'all':
+        return jsonify(vanetza_messages)
+    elif message_type in vanetza_messages:
+        return jsonify({message_type: vanetza_messages[message_type]})
+    else:
+        return jsonify({'error': f'Unknown message type: {message_type}'}), 400
+
+
 if __name__ == '__main__':
+    setup_mqtt_client()
     app.run(host='0.0.0.0', port=3000, debug=True)
