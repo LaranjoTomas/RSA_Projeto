@@ -3,9 +3,9 @@ import time
 import paho.mqtt.client as mqtt
 
 # === Configuration ===
-MQTT_BROKER = "192.168.98.10"
+MQTT_BROKER = "192.168.98.20"
 MQTT_PORT = 1883
-MQTT_TOPIC = "vanetza/in/mapem"
+MQTT_TOPIC = "vanetza/in/cam"
 JSON_FILE_PATH = "rsu_mapem.json"
 PUBLISH_INTERVAL = 5  # seconds
 
