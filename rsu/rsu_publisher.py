@@ -93,7 +93,7 @@ if __name__ == "__main__":
             publish_spatem()
             mapem_counter += 1
             if mapem_counter == 10:
-                publish_mapem
+                publish_mapem()
                 mapem_counter = 0
             time.sleep(PUBLISH_INTERVAL)
     except KeyboardInterrupt:

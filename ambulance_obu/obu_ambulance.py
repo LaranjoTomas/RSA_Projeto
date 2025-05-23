@@ -6,7 +6,7 @@ import paho.mqtt.client as mqtt
 MQTT_BROKER = "192.168.98.20"
 MQTT_PORT = 1883
 CAM_MQTT_TOPIC = "vanetza/in/cam"
-CAM_FILE_PATH = "in_cam.json"
+CAM_FILE_PATH = "obu_cam.json"
 DENM_MQTT_TOPIC = "vanetza/in/denm"
 DENM_FILE_PATH = "obu_denm.json"
 LANE_FILE_PATH = "lane_coordinates_with_n.json"

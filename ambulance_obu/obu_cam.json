@@ -20,7 +20,11 @@
     "semiMinorConf": 4095,
     "specialVehicle": {
         "emergencyContainer": {
-            "embarkationStatus": false
+            "embarkationStatus": false,
+            "lightBarSirenInUse": {
+                "lightBarActivated": true,
+                "sirenActivated": true
+            }
         }
     },
     "speed": 16383,
