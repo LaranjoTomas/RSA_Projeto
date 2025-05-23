@@ -35,52 +35,138 @@ def setup_mqtt_client():
     
     def on_connect(client, userdata, flags, rc):
         logger.info("Connected to MQTT broker with result code " + str(rc))
-        # Subscribe to all Vanetza output topics
-        client.subscribe("vanetza/out/#")
+        # Subscribe to all Vanetza topics
+        client.subscribe("vanetza/out/cam")
+        client.subscribe("vanetza/in/cam")
+        logger.info("Subscribed to vanetza/in/cam and vanetza/out/#")
     
     def on_message(client, userdata, msg):
         try:
             topic = msg.topic
-            message_type = topic.split('/')[-1]  # Extract message type from topic
+            payload = json.loads(msg.payload.decode())
             
-            # Store messages by type
-            if message_type in vanetza_messages:
-                data = json.loads(msg.payload.decode())
-                
-                # Store only the last N messages (limit size)
-                max_msgs = 100
-                vanetza_messages[message_type].append(data)
-                if len(vanetza_messages[message_type]) > max_msgs:
-                    vanetza_messages[message_type].pop(0)
-                
-                logger.info(f"Received {message_type} message")
+            # Handle input CAM messages specifically
+            if topic == "vanetza/in/cam":
+                logger.info(f"Received CAM message on {topic}")
+                handle_cam_message(payload)
+            
+            # Continue handling output messages as before
+            elif "out" in topic:
+                message_type = topic.split('/')[-1]
+                if message_type in vanetza_messages:
+                    # Store only the last N messages (limit size)
+                    max_msgs = 100
+                    vanetza_messages[message_type].append(payload)
+                    if len(vanetza_messages[message_type]) > max_msgs:
+                        vanetza_messages[message_type].pop(0)
+                    
+                    logger.info(f"Received output {message_type} message")
         except Exception as e:
             logger.error(f"Error processing MQTT message: {str(e)}")
+            logger.error(f"Message payload: {msg.payload.decode()}")
     
     client.on_connect = on_connect
     client.on_message = on_message
     
     try:
-        # Try local connection first
-        client.connect("127.0.0.1", 1883, 60)
+        # Try Docker network connection first (same as publisher)
+        logger.info("Trying to connect to MQTT broker at 192.168.98.20...")
+        client.connect("192.168.98.20", 1883, 60)
         
         # Start the MQTT client in a background thread
         mqtt_thread = threading.Thread(target=client.loop_forever)
         mqtt_thread.daemon = True
         mqtt_thread.start()
-        logger.info("MQTT client started successfully")
+        logger.info("MQTT client started successfully using Docker network")
     except Exception as e:
-        logger.error(f"Failed to connect to MQTT broker: {str(e)}")
+        logger.error(f"Failed to connect to Docker MQTT broker: {str(e)}")
         try:
-            client.connect("192.168.98.20", 1883, 60)
+            # Fallback to local connection
+            logger.info("Trying to connect to local MQTT broker...")
+            client.connect("127.0.0.1", 1883, 60)
             
             mqtt_thread = threading.Thread(target=client.loop_forever)
             mqtt_thread.daemon = True
             mqtt_thread.start()
-            logger.info("MQTT client started successfully using Docker network")
+            logger.info("MQTT client started successfully with local connection")
         except Exception as e2:
-            logger.error(f"Failed to connect to MQTT broker via Docker network: {str(e2)}")
+            logger.error(f"Failed to connect to any MQTT broker: {str(e2)}")
 
+def handle_cam_message(cam_message):
+    """Process incoming CAM messages and update vehicle positions"""
+    try:
+        # Extract station ID to identify the vehicle
+        station_id = str(cam_message.get("stationID", "unknown"))
+        
+        # Log the full message for debugging
+        logger.info(f"Processing CAM message: {station_id}")
+        logger.debug(f"CAM message content: {cam_message}")
+        
+        # Extract GPS coordinates from CAM message
+        latitude = cam_message.get("latitude")
+        longitude = cam_message.get("longitude")
+        heading = cam_message.get("heading")
+        speed = cam_message.get("speed")
+        
+        if latitude is None or longitude is None:
+            logger.warning(f"CAM message missing coordinates: {cam_message}")
+            return
+            
+        # Convert heading and speed if needed
+        # CAM messages often use different units or scales
+        if heading == 3601:  # Special value for unavailable
+            heading = 0
+        elif heading is not None:
+            # Try to use the value as is, assuming it's already in degrees
+            heading = float(heading)
+            
+        if speed == 16383:  # Special value for unavailable
+            speed = 0
+        elif speed is not None:
+            # Try to use the value as is, assuming it's in km/h
+            speed = float(speed)
+        else:
+            speed = 50  # Default value
+
+        # Find vehicle by station ID or create a new one
+        vehicle = next((v for v in traffic_data['vehicles'] if v.get('station_id') == station_id), None)
+        
+        if vehicle:
+            # Update existing vehicle
+            vehicle['position'] = {
+                'lat': latitude,
+                'lng': longitude
+            }
+            if heading is not None:
+                vehicle['heading'] = heading
+            if speed is not None:
+                vehicle['speed'] = speed
+                
+            logger.info(f"Updated vehicle position: ID={station_id}, lat={latitude}, lng={longitude}")
+        else:
+            # Create new vehicle with a unique ID
+            new_vehicle = {
+                'id': f'v_cam_{len(traffic_data["vehicles"]) + 1}',
+                'station_id': station_id,
+                'type': 'car',  # Default type
+                'position': {'lat': latitude, 'lng': longitude},
+                'heading': heading if heading is not None else 0,
+                'speed': speed if speed is not None else 50,
+                'waiting': False,
+                'cam_source': True  # Flag to identify CAM-sourced vehicles
+            }
+            
+            # Check if it's potentially an emergency vehicle
+            vehicle_type = cam_message.get("stationType", 0)
+            if vehicle_type == 10:  # Special vehicles like emergency are often type 10
+                new_vehicle['type'] = 'ambulance'
+                
+            # Add vehicle to the list
+            traffic_data['vehicles'].append(new_vehicle)
+            logger.info(f"Added new vehicle from CAM: ID={station_id}, lat={latitude}, lng={longitude}")
+            
+    except Exception as e:
+        logger.error(f"Error handling CAM message: {str(e)}", exc_info=True)
 
 # Convert GPS coordinates to meters
 def gps_to_meters(lat1, lon1, lat2, lon2):
@@ -353,6 +439,8 @@ def get_traffic_data():
     
     # Check if any emergency vehicles with emergency mode are near the intersection
     for vehicle in traffic_data['vehicles']:
+        if 'station_id' not in vehicle:
+            vehicle['station_id'] = vehicle['id']
         if vehicle['type'] == 'ambulance' and vehicle.get('emergency', False):
             # Check if vehicle is approaching intersection and DENM hasn't been sent
             if is_vehicle_near_intersection(vehicle, traffic_data['center'], 80) and not vehicle.get('denm_sent', False):
@@ -538,7 +626,7 @@ def update_vehicle_positions():
             continue
             
         # Calculate speed factor based on vehicle speed
-        speed_factor = 0.00006 * vehicle['speed'] / 30  # Scale factor for speed
+        speed_factor = 0.00012 * vehicle['speed'] / 30  # Scale factor for speed
         
         # Define lane offset (right side of road)
         lane_offset = 0.0001

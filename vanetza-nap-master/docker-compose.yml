@@ -4,6 +4,8 @@ services:
         hostname: rsu
         restart: always
         image: code.nap.av.it.pt:5050/mobility-networks/vanetza:latest
+        volumes:
+          - ./deployments/atcll/config-rsu.ini:/config.ini
         cap_add:
             - "NET_ADMIN"
         environment:
@@ -21,11 +23,13 @@ services:
         hostname: obu
         restart: always
         image: code.nap.av.it.pt:5050/mobility-networks/vanetza:latest
+        volumes:
+          - ./deployments/atcll/config-obu.ini:/config.ini
         cap_add:
             - "NET_ADMIN"
         environment:
-            - VANETZA_STATION_ID=112
-            - VANETZA_STATION_TYPE=10
+            - VANETZA_STATION_ID=2
+            - VANETZA_STATION_TYPE=5
             - VANETZA_MAC_ADDRESS=6e:06:e0:03:00:02
             - VANETZA_INTERFACE=br0
             - START_EMBEDDED_MOSQUITTO=true
