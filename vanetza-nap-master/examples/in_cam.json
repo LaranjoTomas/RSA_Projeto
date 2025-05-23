@@ -1,11 +1,11 @@
 {
-    "accEngaged": true,
+    "accEngaged": false,
     "acceleration": 0,
-    "altitude": 800001,
+    "altitude": 0,
     "altitudeConf": 15,
-    "brakePedal": true,
-    "collisionWarning": true,
-    "cruiseControl": true,
+    "brakePedal": false,
+    "collisionWarning": false,
+    "cruiseControl": false,
     "curvature": 1023,
     "driveDirection": "FORWARD",
     "emergencyBrake": true,
@@ -23,7 +23,7 @@
             "embarkationStatus": false
         }
     },
-    "speed": 16383,
+    "speed": 0,
     "speedConf": 127,
     "speedLimiter": true,
     "stationID": 1,

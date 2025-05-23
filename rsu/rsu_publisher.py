@@ -72,13 +72,17 @@ def update_spatem(spatem_msg,lights):
     for intersection in spatem_msg['intersections']:
         for state in intersection['states']:
             if state['signalGroup'] == 1:
-                state['state-time-speed']['eventState'] = lights[0]
+                for sts in state['state-time-speed']:
+                    sts['eventState'] = lights[0]
             if state['signalGroup'] == 3:
-                state['state-time-speed']['eventState'] = lights[1]
+                for sts in state['state-time-speed']:
+                    sts['eventState'] = lights[1]
             if state['signalGroup'] == 5:
-                state['state-time-speed']['eventState'] = lights[2]
+                for sts in state['state-time-speed']:
+                    sts['eventState'] = lights[2]
             if state['signalGroup'] == 7:
-                state['state-time-speed']['eventState'] = lights[3]
+                for sts in state['state-time-speed']:
+                    sts['eventState'] = lights[3]
     return spatem_msg
 
 # === Main Loop ===
