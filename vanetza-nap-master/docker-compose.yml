@@ -37,7 +37,6 @@ services:
         networks:
             vanetzalan0:
                 ipv4_address: 192.168.98.20
-            
 networks:
   vanetzalan0:
     external: true

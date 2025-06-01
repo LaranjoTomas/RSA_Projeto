@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { MapContainer, CircleMarker, Polygon, Polyline, Marker } from 'react-leaflet';
+import { MapContainer, CircleMarker, Polygon, Polyline, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -45,10 +45,12 @@ const VehicleMarker = ({ position, vehicle }) => {
   );
 };
 
+
+
 const TrafficMap = () => {
   const [data, setData] = useState(null);
-  const [vanetzaVehicles, setVanetzaVehicles] = useState([]);
   const [vanetzaEvents, setVanetzaEvents] = useState([]);
+  const [vanetzaVehicles, setVanetzaVehicles] = useState([]);
   const [trafficData, setTrafficData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -68,6 +70,8 @@ const TrafficMap = () => {
 
   // Fetch traffic data
   useEffect(() => {
+    let isMounted = true;
+    
     const fetchData = async () => {
       try {
         const response = await fetch(`${serverUrl}/api/traffic`);
@@ -75,12 +79,18 @@ const TrafficMap = () => {
           throw new Error('Network response was not ok');
         }
         const data = await response.json();
-        setTrafficData(data);
-        setLoading(false);
+        // console.log("Traffic data received:", data);
+        // console.log("Traffic light states:", data.traffic_lights.map(light => 
+        // `${light.id}: ${light.state} (${light.countdown}s)`));
+        // setTrafficData(data);
+        // setLoading(false);
+        if (isMounted) {  // Only update state if component is still mounted
+          console.log("Traffic light states:", data.traffic_lights.map(l => `${l.id}: ${l.state}`));
+          setTrafficData(data);
+          setLoading(false);
+        }
       } catch (err) {
         console.error("Error fetching traffic data:", err);
-        // Don't set loading to false on error if we're still waiting for data
-        // Instead, initialize with empty data
         setTrafficData({
           vehicles: [],
           traffic_lights: [],
@@ -196,6 +206,40 @@ const TrafficMap = () => {
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  const TrafficLight = ({ light }) => {
+    const getColor = () => {
+      switch (light.state) {
+        case 'RED': return 'red';
+        case 'GREEN': return 'green';
+        case 'YELLOW': return 'yellow';
+        default: return 'gray';
+      }
+    };
+
+    return (
+      <Marker 
+        position={[light.position.lat, light.position.lng]} 
+        icon={new L.DivIcon({
+          className: 'traffic-light-icon',
+          html: `<div style="
+            background-color: ${getColor()}; 
+            width: 14px; 
+            height: 14px; 
+            border-radius: 50%; 
+            border: 2px solid black;
+            box-shadow: 0 0 5px ${getColor()};
+          "></div>`,
+          iconSize: [18, 18],
+          iconAnchor: [9, 9]
+        })}>
+        <Popup>
+          {light.id}: {light.state}<br/>
+          Countdown: {light.countdown}s
+        </Popup>
+      </Marker>
+    );
   };
 
   if (loading) return <div>Loading traffic data...</div>;
@@ -352,18 +396,22 @@ const TrafficMap = () => {
           />
           
           {/* Draw traffic lights */}
-          {trafficData.traffic_lights.map(light => (
-            <CircleMarker
-              key={light.id}
-              center={[light.position.lat, light.position.lng]}
-              radius={8}
-              pathOptions={{
-                fillColor: light.state === 'RED' ? 'red' : 'green',
-                fillOpacity: 1,
-                color: 'white',
-                weight: 2
-              }}
+          {trafficDataToUse.traffic_lights.map(light => (
+            <TrafficLight 
+              key={`${light.id}-${light.state}-${trafficDataToUse.timestamp || Date.now()}`} 
+              light={light} 
             />
+            // <CircleMarker
+            //   key={light.id}
+            //   center={[light.position.lat, light.position.lng]}
+            //   radius={8}
+            //   pathOptions={{
+            //     fillColor: light.state === 'RED' ? 'red' : 'green',
+            //     fillOpacity: 1,
+            //     color: 'white',
+            //     weight: 2
+            //   }}
+            // />
           ))}
           
           {/* Draw vehicles */}
@@ -373,6 +421,21 @@ const TrafficMap = () => {
               position={[vehicle.position.lat, vehicle.position.lng]}
               vehicle={vehicle}
             />
+          ))}
+
+          {/* Draw RSU nodes */}
+          {trafficDataToUse.rsu_nodes && trafficDataToUse.rsu_nodes.map(rsu => (
+            <Marker
+              key={rsu.id}
+              position={[rsu.position.lat, rsu.position.lng]}
+              icon={new L.Icon({
+                iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+                iconSize: [25, 41],
+                iconAnchor: [12, 41],
+                popupAnchor: [1, -34]
+              })}>
+              <Popup>RSU: {rsu.id}</Popup>
+            </Marker>
           ))}
 
           {/* Draw vehicles from Vanetza data */}

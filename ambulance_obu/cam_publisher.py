@@ -35,7 +35,7 @@ def update_coordinates():
 def generate_cam():
     try:
         # Load sample CAM message from file
-        with open('./vanetza-nap-master/examples/in_cam.json') as f:
+        with open('../vanetza-nap-master/examples/in_cam.json') as f:
             cam_message = json.load(f)
         
         # Update coordinates dynamically

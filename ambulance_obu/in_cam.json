@@ -1,14 +1,14 @@
 {
-    "accEngaged": true,
+    "accEngaged": false,
     "acceleration": 0,
     "altitude": 0,
     "altitudeConf": 15,
     "brakePedal": false,
     "collisionWarning": false,
-    "cruiseControl": true,
+    "cruiseControl": false,
     "curvature": 1023,
     "driveDirection": "FORWARD",
-    "emergencyBrake": false,
+    "emergencyBrake": true,
     "gasPedal": false,
     "heading": 3601,
     "headingConf": 127,
@@ -19,18 +19,14 @@
     "semiMajorOrient": 3601,
     "semiMinorConf": 4095,
     "specialVehicle": {
-        "emergencyContainer": {
-            "embarkationStatus": false,
-            "lightBarSirenInUse": {
-                "lightBarActivated": true,
-                "sirenActivated": true
-            }
+        "publicTransportContainer": {
+            "embarkationStatus": false
         }
     },
-    "speed": 16383,
+    "speed": 0,
     "speedConf": 127,
     "speedLimiter": true,
-    "stationID": 112,
+    "stationID": 1,
     "stationType": 15,
     "width": 3.0,
     "yawRate": 0

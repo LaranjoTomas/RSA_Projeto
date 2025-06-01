@@ -1,7 +1,7 @@
 {
     "management": {
         "actionID": {
-            "originatingStationID": 112,
+            "originatingStationID": 1,
             "sequenceNumber": 0
         },
         "detectionTime": 1626453837.658,
@@ -20,7 +20,7 @@
             }
         },
         "validityDuration": 120,
-        "stationType": 10
+        "stationType": 15
     },
     "situation": {
         "informationQuality": 7,

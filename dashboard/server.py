@@ -30,37 +30,70 @@ vanetza_messages = {
     'vam': []
 }
 
+last_spatem_update = 0
+
+rsu_position = { 
+    'lat': 40.6329,
+    'lng': -8.6585
+}
+
 def setup_mqtt_client():
     client = mqtt.Client()
     
     def on_connect(client, userdata, flags, rc):
         logger.info("Connected to MQTT broker with result code " + str(rc))
         # Subscribe to all Vanetza topics
-        client.subscribe("vanetza/out/cam")
-        client.subscribe("vanetza/in/cam")
-        logger.info("Subscribed to vanetza/in/cam and vanetza/out/#")
-    
+        client.subscribe("vanetza/out/cam") # To receive OBU CAM messages
+        client.subscribe("vanetza/time/spatem") # To receive RSU SPATEM messages, for the semaphore state
+        client.subscribe("vanetza/time/cam") # If needed, to receive RSU CAM messages
+
     def on_message(client, userdata, msg):
         try:
             topic = msg.topic
             payload = json.loads(msg.payload.decode())
             
-            # Handle input CAM messages specifically
-            if topic == "vanetza/in/cam":
+            if topic == "vanetza/time/spatem":
+                logger.info(f"Received SPATEM message on {topic}")
+                print(f"SPATEM MESSAGE: {json.dumps(payload, indent=2)}")
+                if 'spatem' in vanetza_messages:
+                    vanetza_messages['spatem'].append(payload)
+                    if len(vanetza_messages['spatem']) > 100:
+                        vanetza_messages['spatem'].pop(0)
+                handle_spatem_message(payload)
+                
+            elif topic == "vanetza/time/cam":
                 logger.info(f"Received CAM message on {topic}")
-                handle_cam_message(payload)
+                logger.info(f"CAM message type: {payload.get('stationType')}")
+                # Check for emergency vehicle (ambulance)
+                if payload.get("stationType") == 10:
+                    logger.info("Processing emergency CAM message from ambulance")
+                    handle_ambulance_cam(payload)
+                elif payload.get("stationType") == 15:  # RSU station type
+                    logger.info(f"Processing RSU CAM: {json.dumps(payload, indent=2)}")
+                    handle_rsu_cam_message(payload)
+                else:
+                    logger.info("Processing regular CAM message")
+                    handle_cam_message(payload)
             
+            # Handle input CAM messages specifically
+            elif topic == "vanetza/out/cam":
+                logger.info(f"Received CAM message on {topic}")
+                if payload.get("stationType") == 10:
+                    logger.info("Processing emergency CAM message from ambulance")
+                    handle_ambulance_cam(payload)
+                else:
+                    handle_cam_message(payload)
+                
             # Continue handling output messages as before
             elif "out" in topic:
                 message_type = topic.split('/')[-1]
                 if message_type in vanetza_messages:
-                    # Store only the last N messages (limit size)
                     max_msgs = 100
                     vanetza_messages[message_type].append(payload)
                     if len(vanetza_messages[message_type]) > max_msgs:
                         vanetza_messages[message_type].pop(0)
-                    
                     logger.info(f"Received output {message_type} message")
+                    
         except Exception as e:
             logger.error(f"Error processing MQTT message: {str(e)}")
             logger.error(f"Message payload: {msg.payload.decode()}")
@@ -70,8 +103,8 @@ def setup_mqtt_client():
     
     try:
         # Try Docker network connection first (same as publisher)
-        logger.info("Trying to connect to MQTT broker at 192.168.98.20...")
-        client.connect("192.168.98.20", 1883, 60)
+        logger.info("Trying to connect to MQTT broker at 192.168.98.10...")
+        client.connect("192.168.98.10", 1883, 60)
         
         # Start the MQTT client in a background thread
         mqtt_thread = threading.Thread(target=client.loop_forever)
@@ -91,6 +124,148 @@ def setup_mqtt_client():
             logger.info("MQTT client started successfully with local connection")
         except Exception as e2:
             logger.error(f"Failed to connect to any MQTT broker: {str(e2)}")
+
+def handle_spatem_message(spatem_payload):
+    """Process incoming SPATEM messages and update traffic light states"""
+    try:
+        global last_spatem_update
+        logger.info("Processing SPATEM message to update traffic lights")
+        logger.info(f"SPATEM keys: {list(spatem_payload.keys())}")
+        
+        last_spatem_update = int(time.time())
+
+        # Check if fields data is available (depends on message format)
+        if "fields" in spatem_payload and "spatem" in spatem_payload["fields"]:
+            spatem_data = spatem_payload["fields"]["spatem"]
+        elif "intersections" in spatem_payload:
+            spatem_data = spatem_payload  # Try using the payload directly
+        else:
+            logger.warning("SPATEM message does not contain expected fields")
+            return
+        
+        # Extract intersection data
+        if "intersections" not in spatem_data:
+            logger.warning("No intersections found in SPATEM message")
+            return
+            
+        # Map signalGroup to traffic light direction
+        signal_group_to_direction = {
+            1: "NORTH",
+            3: "EAST", 
+            5: "SOUTH",
+            7: "WEST"
+        }
+        
+        # Event state mapping (3 is RED, 5 is GREEN)
+        event_state_to_color = {
+            3: "RED",
+            5: "GREEN"
+        }
+        
+        for intersection in spatem_data["intersections"]:
+            for state in intersection.get("states", []):
+                signal_group = state.get("signalGroup")
+                direction = signal_group_to_direction.get(signal_group)
+                
+                if direction:
+                    for sts in state.get("state-time-speed", []):
+                        event_state = sts.get("eventState")
+                        if event_state in event_state_to_color:
+                            color = event_state_to_color[event_state]
+                            
+                            # Update the corresponding traffic light
+                            for light in traffic_data['traffic_lights']:
+                                if light['direction'] == direction:
+                                    light['state'] = color
+                                    light['countdown'] = sts.get("timing", {}).get("minEndTime", 30) % 100
+                                    logger.info(f"Updated traffic light {light['id']} to {color}")
+                                    break
+    
+    except Exception as e:
+        logger.error(f"Error processing SPATEM message: {str(e)}", exc_info=True)
+
+def handle_rsu_cam_message(cam_payload):
+    """Process incoming CAM messages from RSU and update RSU position"""
+    try:
+        global rsu_position
+        
+        # Extract station info to confirm it's from an RSU
+        station_id = cam_payload.get("stationID", 0)
+        station_type = cam_payload.get("stationType", 0)
+        
+        if station_type == 15:  # RSU type
+            # Extract position
+            if "fields" in cam_payload and "cam" in cam_payload["fields"]:
+                cam_data = cam_payload["fields"]["cam"]
+            else:
+                cam_data = cam_payload
+            
+            latitude = cam_data.get("latitude")
+            longitude = cam_data.get("longitude")
+            
+            if latitude is not None and longitude is not None:
+                # Update the RSU position
+                rsu_position['lat'] = latitude
+                rsu_position['lng'] = longitude
+                logger.info(f"Updated RSU position: ID={station_id}, lat={latitude}, lng={longitude}")
+                
+                # Add RSU to traffic_data if not already present
+                rsu = next((item for item in traffic_data.get('rsu_nodes', []) if item['id'] == f'rsu_{station_id}'), None)
+                
+                if rsu:
+                    rsu['position'] = {'lat': latitude, 'lng': longitude}
+                else:
+                    if 'rsu_nodes' not in traffic_data:
+                        traffic_data['rsu_nodes'] = []
+                        
+                    traffic_data['rsu_nodes'].append({
+                        'id': f'rsu_{station_id}',
+                        'type': 'rsu',
+                        'position': {'lat': latitude, 'lng': longitude},
+                    })
+    
+    except Exception as e:
+        logger.error(f"Error processing RSU CAM message: {str(e)}", exc_info=True)
+
+def handle_ambulance_cam(cam_message):
+    """Process incoming CAM messages from emergency (ambulance) vehicles."""
+    try:
+        # Extract identifying and position info
+        station_id = str(cam_message.get("stationID", "unknown"))
+        latitude = cam_message.get("latitude")
+        longitude = cam_message.get("longitude")
+        heading = cam_message.get("heading", 0)
+        speed = cam_message.get("speed", 0)
+        
+        if latitude is None or longitude is None:
+            logger.warning("Ambulance CAM message missing coordinates")
+            return
+        
+        # Try to update an existing ambulance vehicle
+        vehicle = next((v for v in traffic_data['vehicles']
+                        if v.get('station_id') == station_id and v.get('type') == 'ambulance'), None)
+        
+        if vehicle:
+            vehicle['position'] = {'lat': latitude, 'lng': longitude}
+            vehicle['heading'] = heading
+            vehicle['speed'] = speed
+            vehicle['emergency'] = True
+            logger.info(f"Updated ambulance vehicle: ID={station_id}")
+        else:
+            new_vehicle = {
+                'id': f'v_ambulance_{len(traffic_data["vehicles"]) + 1}',
+                'station_id': station_id,
+                'type': 'ambulance',
+                'position': {'lat': latitude, 'lng': longitude},
+                'heading': heading,
+                'speed': speed,
+                'emergency': True,
+                'waiting': False
+            }
+            traffic_data['vehicles'].append(new_vehicle)
+            logger.info(f"Added new ambulance vehicle: ID={station_id}")
+    except Exception as e:
+        logger.error(f"Error handling ambulance CAM message: {str(e)}", exc_info=True)
 
 def handle_cam_message(cam_message):
     """Process incoming CAM messages and update vehicle positions"""
@@ -112,23 +287,18 @@ def handle_cam_message(cam_message):
             logger.warning(f"CAM message missing coordinates: {cam_message}")
             return
             
-        # Convert heading and speed if needed
-        # CAM messages often use different units or scales
-        if heading == 3601:  # Special value for unavailable
+        if heading == 3601:
             heading = 0
         elif heading is not None:
-            # Try to use the value as is, assuming it's already in degrees
             heading = float(heading)
             
         if speed == 16383:  # Special value for unavailable
             speed = 0
         elif speed is not None:
-            # Try to use the value as is, assuming it's in km/h
             speed = float(speed)
         else:
             speed = 50  # Default value
 
-        # Find vehicle by station ID or create a new one
         vehicle = next((v for v in traffic_data['vehicles'] if v.get('station_id') == station_id), None)
         
         if vehicle:
@@ -144,7 +314,6 @@ def handle_cam_message(cam_message):
                 
             logger.info(f"Updated vehicle position: ID={station_id}, lat={latitude}, lng={longitude}")
         else:
-            # Create new vehicle with a unique ID
             new_vehicle = {
                 'id': f'v_cam_{len(traffic_data["vehicles"]) + 1}',
                 'station_id': station_id,
@@ -256,17 +425,18 @@ traffic_data = {
             'speed': 80,
             'waiting': False
         },
-        {
-            'id': 'v_2',
-            'type': 'ambulance',
-            'position': {'lat': 40.6325, 'lng': -8.6550}, 
-            'heading': 270,  # Heading west
-            'speed': 90,
-            'emergency': True,
-            'denm_sent': False,
-            'waiting': False
-        }
+        # {
+        #     'id': 'v_2',
+        #     'type': 'ambulance',
+        #     'position': {'lat': 40.6325, 'lng': -8.6550}, 
+        #     'heading': 270,  # Heading west
+        #     'speed': 90,
+        #     'emergency': True,
+        #     'denm_sent': False,
+        #     'waiting': False
+        # }
     ],
+    'rsu_nodes': [],
     'emergency_mode': False,
     'emergency_vehicle': None
 }
@@ -470,8 +640,6 @@ def get_traffic_data():
     # Update traffic lights
     if traffic_data['emergency_mode']:
         handle_emergency_vehicle()
-    else:
-        update_normal_traffic_lights(current_time)
     
     update_vehicle_positions()
     
