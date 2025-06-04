@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder='app/build', static_url_path='')
 CORS(app)
 
-# Intersection configuration
 INTERSECTION_RADIUS = 15  # meters
 LANE_WIDTH = 2.0 # meters
 
@@ -71,6 +70,9 @@ def setup_mqtt_client():
                 elif payload.get("stationType") == 15:  # RSU station type
                     logger.info(f"Processing RSU CAM: {json.dumps(payload, indent=2)}")
                     handle_rsu_cam_message(payload)
+                elif payload.get("stationType") == 5:  # Regular vehicle
+                    logger.info("Processing regular vehicle CAM message")
+                    handle_cam_message(payload)
                 else:
                     logger.info("Processing regular CAM message")
                     handle_cam_message(payload)
@@ -78,9 +80,13 @@ def setup_mqtt_client():
             # Handle input CAM messages specifically
             elif topic == "vanetza/out/cam":
                 logger.info(f"Received CAM message on {topic}")
-                if payload.get("stationType") == 10:
+                station_type = payload.get("stationType", 0)
+                if station_type == 10:  # Emergency vehicle (ambulance)
                     logger.info("Processing emergency CAM message from ambulance")
                     handle_ambulance_cam(payload)
+                elif station_type == 5:  # Normal vehicle
+                    logger.info("Processing normal vehicle CAM message")
+                    handle_cam_message(payload)
                 else:
                     handle_cam_message(payload)
                 
@@ -102,11 +108,9 @@ def setup_mqtt_client():
     client.on_message = on_message
     
     try:
-        # Try Docker network connection first (same as publisher)
         logger.info("Trying to connect to MQTT broker at 192.168.98.10...")
         client.connect("192.168.98.10", 1883, 60)
         
-        # Start the MQTT client in a background thread
         mqtt_thread = threading.Thread(target=client.loop_forever)
         mqtt_thread.daemon = True
         mqtt_thread.start()
@@ -114,7 +118,6 @@ def setup_mqtt_client():
     except Exception as e:
         logger.error(f"Failed to connect to Docker MQTT broker: {str(e)}")
         try:
-            # Fallback to local connection
             logger.info("Trying to connect to local MQTT broker...")
             client.connect("127.0.0.1", 1883, 60)
             
@@ -134,11 +137,10 @@ def handle_spatem_message(spatem_payload):
         
         last_spatem_update = int(time.time())
 
-        # Check if fields data is available (depends on message format)
         if "fields" in spatem_payload and "spatem" in spatem_payload["fields"]:
             spatem_data = spatem_payload["fields"]["spatem"]
         elif "intersections" in spatem_payload:
-            spatem_data = spatem_payload  # Try using the payload directly
+            spatem_data = spatem_payload  
         else:
             logger.warning("SPATEM message does not contain expected fields")
             return
@@ -292,7 +294,7 @@ def handle_cam_message(cam_message):
         elif heading is not None:
             heading = float(heading)
             
-        if speed == 16383:  # Special value for unavailable
+        if speed == 16383:
             speed = 0
         elif speed is not None:
             speed = float(speed)
@@ -325,9 +327,8 @@ def handle_cam_message(cam_message):
                 'cam_source': True  # Flag to identify CAM-sourced vehicles
             }
             
-            # Check if it's potentially an emergency vehicle
             vehicle_type = cam_message.get("stationType", 0)
-            if vehicle_type == 10:  # Special vehicles like emergency are often type 10
+            if vehicle_type == 10:
                 new_vehicle['type'] = 'ambulance'
                 
             # Add vehicle to the list
@@ -339,8 +340,7 @@ def handle_cam_message(cam_message):
 
 # Convert GPS coordinates to meters
 def gps_to_meters(lat1, lon1, lat2, lon2):
-    """Calculate distance between two GPS points in meters"""
-    R = 6371000  # Earth radius in meters
+    R = 6371000
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
@@ -354,8 +354,6 @@ def gps_to_meters(lat1, lon1, lat2, lon2):
     return R * c
 
 def local_to_gps(x, y, center_lat, center_lng):
-    """Convert local coordinates to GPS coordinates"""
-    # Earth's radius in meters
     R = 6371000
     
     # Calculate latitude change
@@ -369,13 +367,9 @@ def local_to_gps(x, y, center_lat, center_lng):
     }
 
 def gps_to_local(lat, lng, center_lat, center_lng):
-    """Convert GPS coordinates to local XY coordinates with center at (0,0)"""
-    # Earth's radius in meters
     R = 6371000
-    
     # Calculate x (longitude) change
     x = math.cos(math.radians(center_lat)) * R * math.radians(lng - center_lng)
-    
     # Calculate y (latitude) change 
     y = R * math.radians(lat - center_lat)
     
@@ -417,14 +411,14 @@ traffic_data = {
         }
     ],
     'vehicles': [
-        {
-            'id': 'v_1',
-            'type': 'car',
-            'position': {'lat': 40.6360, 'lng': -8.6586}, 
-            'heading': 180,  # Heading in degrees (0=North, 90=East, 180=South, 270=West)
-            'speed': 80,
-            'waiting': False
-        },
+        # {
+        #     'id': 'v_1',
+        #     'type': 'car',
+        #     'position': {'lat': 40.6360, 'lng': -8.6586}, 
+        #     'heading': 180,  # Heading in degrees (0=North, 90=East, 180=South, 270=West)
+        #     'speed': 80,
+        #     'waiting': False
+        # },
         # {
         #     'id': 'v_2',
         #     'type': 'ambulance',
@@ -584,7 +578,6 @@ def send_denm_message(vehicle):
         # Log the DENM message
         logger.info(f"Sending DENM message for vehicle {vehicle['id']}")
         
-        # Here we'll just call our own endpoint (in a real system, this would go to vanetza)
         response = requests.post(
             "http://localhost:3000/api/denm", 
             json=denm_message, 
@@ -721,7 +714,6 @@ def receive_denm():
                             'message': 'DENM processed, emergency vehicle detected'
                         })
         
-        # If we reach here, it was not an emergency vehicle DENM
         return jsonify({
             'status': 'success', 
             'message': 'DENM received but not an emergency vehicle notification'
@@ -771,7 +763,9 @@ def update_vehicle_positions():
     
     for vehicle in traffic_data['vehicles']:
         # Update position based on heading
-
+        if vehicle.get('cam_source', False):
+            # Don't update these vehicles' positions, they're controlled by CAM messages
+            continue
         local_pos = gps_to_local(vehicle['position']['lat'], vehicle['position']['lng'], center['lat'], center['lng'])
 
         heading = vehicle['heading']
@@ -794,9 +788,8 @@ def update_vehicle_positions():
             continue
             
         # Calculate speed factor based on vehicle speed
-        speed_factor = 0.00012 * vehicle['speed'] / 30  # Scale factor for speed
+        speed_factor = 0.000065 * vehicle['speed'] / 30  # Scale factor for speed
         
-        # Define lane offset (right side of road)
         lane_offset = 0.0001
         
         if heading == 0:  # Northbound

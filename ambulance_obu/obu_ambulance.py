@@ -1,5 +1,7 @@
 import json
 import time
+import logging
+import uuid
 import math
 import paho.mqtt.client as mqtt
 
@@ -11,7 +13,7 @@ CAM_FILE_PATH = "obu_cam.json"
 DENM_MQTT_TOPIC = "vanetza/in/denm"
 DENM_FILE_PATH = "obu_denm.json"
 LANE_FILE_PATH = "lane_coordinates_with_n.json"
-PUBLISH_INTERVAL = 0.1
+PUBLISH_INTERVAL = 0.7
 
 
 INTERSECTION_CENTER = {"lat": 40.6329, "lng": -8.6585}
@@ -19,7 +21,7 @@ DENM_THRESHOLD = 100  # when within X sends denm
 
 # === Tracking ===
 denm_counter = 0
-current_lane = 4
+current_lane = 2
 lane_point = 0
 
 # === Compute Start Positions ===
@@ -51,7 +53,7 @@ position = {
     }
 }
 
-speed_delta = 0.000030
+speed_delta = 0.000150
 last_dist = None
 denm_sent = False
 
@@ -63,7 +65,7 @@ def load_json(filepath):
 
 def haversine_distance(lat1, lon1, lat2, lon2):
     # Calculate distance in meters between two lat/lon pairs
-    R = 6371000  # Earth radius in meters
+    R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
@@ -76,13 +78,13 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 def update_cam_position(cam_msg, lane):
     pos = position[lane]
 
-    if lane == 1:  # North: move south (decrease latitude)
+    if lane == 1:  # North: move south 
         pos["lat"] -= speed_delta
-    elif lane == 2:  # East: move west (decrease longitude)
+    elif lane == 2:  # East: move west 
         pos["lng"] -= speed_delta
-    elif lane == 3:  # South: move north (increase latitude)
+    elif lane == 3:  # South: move north 
         pos["lat"] += speed_delta
-    elif lane == 4:  # West: move east (increase longitude)
+    elif lane == 4:  # West: move east 
         pos["lng"] += speed_delta
 
     # Set updated values in cam_msg with a small fixed heading per lane
@@ -103,9 +105,7 @@ def update_cam_position(cam_msg, lane):
         cam_msg["longitude"] = pos["lng"]
         cam_msg["heading"] = 90   # Moving east
 
-    # Mark as emergency vehicle
     cam_msg["stationType"] = 10
-    # Optionally include a speed field
     cam_msg["speed"] = 80
     return cam_msg
 
@@ -117,12 +117,10 @@ def publish_cam():
 
     payload = json.dumps(cam_msg)
 
-    info = client.publish(CAM_MQTT_TOPIC, payload)
-    # check .rc, not result[0]
+    info = client.publish(CAM_MQTT_TOPIC, payload, qos=1)
+    
     if info.rc == mqtt.MQTT_ERR_SUCCESS:
         print(f"Sent CAM message to `{CAM_MQTT_TOPIC}`: pos=({cam_msg['latitude']:.7f}, {cam_msg['longitude']:.7f})")
-    else:
-        print(f"Failed to send CAM to `{CAM_MQTT_TOPIC}` (rc={info.rc})")
 
 # === DENM ===
 
@@ -130,32 +128,41 @@ def publish_denm():
     denm_msg = load_json(DENM_FILE_PATH)
     pos = position[current_lane]
     heading = {1:180, 2:270, 3:0, 4:90}[current_lane]
-    denm_msg["location"] = {
-        "eventPositionHeading": heading,
-        "eventPosition": {
-            "latitude": pos["lat"],
-            "longitude": pos["lng"]
-        }
-    }
+    
+    if "management" in denm_msg:
+        if "eventPosition" in denm_msg["management"]:
+            denm_msg["management"]["eventPosition"]["latitude"] = pos["lat"]
+            denm_msg["management"]["eventPosition"]["longitude"] = pos["lng"]
+    
+    if "situation" in denm_msg:
+        if "eventType" in denm_msg["situation"]:
+            denm_msg["situation"]["eventType"] = {
+                "causeCode": 6, 
+                "subCauseCode": 0
+            }
+    
     payload = json.dumps(denm_msg)
-    info = client.publish(DENM_MQTT_TOPIC, payload)
+    info = client.publish(DENM_MQTT_TOPIC, payload, qos=1)
     if info.rc == mqtt.MQTT_ERR_SUCCESS:
         print(f"Sent DENM to `{DENM_MQTT_TOPIC}` (heading={heading})")
     else:
         print(f"Failed to send DENM to `{DENM_MQTT_TOPIC}` (rc={info.rc})")
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
 
 # === MQTT Setup ===
-client = mqtt.Client()
+
+client_id = f"ambulance_obu_{uuid.uuid4()}"
+client = mqtt.Client(client_id=client_id)
 
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        print("Connected to MQTT Broker")
+        logging.info("Connected to MQTT Broker")
     else:
-        print("Failed to connect, return code %d\n", rc)
+        logging.error(f"Failed to connect to broker, return code {rc}")
 
 client.on_connect = on_connect
-client.connect(MQTT_BROKER, MQTT_PORT, 60)
+client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
 
 # === Main Loop ===        
 last_dist = None
@@ -178,15 +185,13 @@ if __name__ == "__main__":
                end_threshold = NS_START
 
             if dist > end_threshold:
-                cycle_order = [1, 4, 2, 3]
-                idx = cycle_order.index(current_lane)
-                current_lane = cycle_order[(idx + 1) % len(cycle_order)]
+                current_lane = 3 if current_lane == 2 else 2
                 denm_sent = False
                 last_dist = None
                 print(f"Cycling to next lane: {current_lane}")
 
 
-            # DENM logic (unchanged)
+            # DENM logic
             if last_dist is None:
                 last_dist = dist
 
