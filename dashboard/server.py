@@ -1,8 +1,6 @@
 from flask import Flask, jsonify, request, render_template, send_from_directory
 from flask_cors import CORS
-import random
 import time
-import os
 import json
 import math
 import threading
@@ -37,7 +35,7 @@ rsu_position = {
 }
 
 def setup_mqtt_client():
-    client = mqtt.Client()
+    client = mqtt.Client(client_id=f"rsu_server_1")
     
     def on_connect(client, userdata, flags, rc):
         logger.info("Connected to MQTT broker with result code " + str(rc))
@@ -474,14 +472,14 @@ def update_normal_traffic_lights(current_time):
     cycle = (current_time // 30) % 2
     if cycle == 0:
         traffic_data['traffic_lights'][0]['state'] = 'RED'    # North
-        traffic_data['traffic_lights'][1]['state'] = 'GREEN'  # East
-        traffic_data['traffic_lights'][2]['state'] = 'RED'    # South
-        traffic_data['traffic_lights'][3]['state'] = 'GREEN'  # West
+        traffic_data['traffic_lights'][1]['state'] = 'GREEN'  # West
+        traffic_data['traffic_lights'][2]['state'] = 'RED'    # North
+        traffic_data['traffic_lights'][3]['state'] = 'GREEN'  # East
     else:
         traffic_data['traffic_lights'][0]['state'] = 'GREEN'  # North
-        traffic_data['traffic_lights'][1]['state'] = 'RED'    # East
+        traffic_data['traffic_lights'][1]['state'] = 'RED'    # Wast
         traffic_data['traffic_lights'][2]['state'] = 'GREEN'  # South
-        traffic_data['traffic_lights'][3]['state'] = 'RED'    # West
+        traffic_data['traffic_lights'][3]['state'] = 'RED'    # East
     
     # Update countdowns
     for light in traffic_data['traffic_lights']:
@@ -894,5 +892,6 @@ def get_vanetza_messages():
 
 
 if __name__ == '__main__':
+    print("====================== RSU Server 1 ======================")
     setup_mqtt_client()
     app.run(host='0.0.0.0', port=3000, debug=True)

@@ -11,7 +11,7 @@ MQTT_BROKER = "192.168.98.30"
 MQTT_PORT = 1883
 CAM_MQTT_TOPIC = "vanetza/in/cam"
 CAM_FILE_PATH = "in_cam.json"
-SPATEM_MQTT_TOPIC = "vanetza/in/spatem"  
+SPATEM_MQTT_TOPIC = "vanetza/out/spatem"  
 PUBLISH_INTERVAL = 0.4
 MAX_STOP_TIME = 10  
 
@@ -131,7 +131,7 @@ def publish_cam():
 def on_message(client, userdata, msg):
     global traffic_light_states, stopped_at_light
     
-    print(f"🔥 RECEIVED MESSAGE ON TOPIC: {msg.topic}")
+    print(f" RECEIVED MESSAGE ON TOPIC: {msg.topic}")
     
     try:
         spatem = json.loads(msg.payload.decode())
@@ -153,7 +153,7 @@ def on_message(client, userdata, msg):
                         
                         old_state = traffic_light_states.get(heading, "UNKNOWN")
                         if old_state != light_state:
-                            print(f"🚦 Traffic light for {heading}° changed from {old_state} to {light_state}")
+                            print(f" Traffic light for {heading}° changed from {old_state} to {light_state}")
                         traffic_light_states[heading] = light_state
                         
                         print(f"Updated traffic light state: heading={heading}, state={light_state}")
@@ -164,17 +164,14 @@ def on_message(client, userdata, msg):
         traceback.print_exc()
 
 # === MQTT Setup ===
-client_id = f"normal_obu_{int(time.time())}"
-client = mqtt.Client(client_id=client_id)
+client = mqtt.Client(client_id=f"normal_obu_1", clean_session=False)
 heading_map = {1: 0, 2: 90, 3: 180, 4: 270} 
 
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         logging.info(f"Connected to MQTT Broker at {MQTT_BROKER}:{MQTT_PORT}")
-        client.subscribe("vanetza/in/spatem", qos=1)
-        client.subscribe("vanetza/out/spatem", qos=1)
-        client.subscribe("vanetza/time/spatem", qos=1)
-        logging.info("Subscribed to SPATEM topics with QoS=1")
+        client.subscribe(SPATEM_MQTT_TOPIC, qos=0)
+        logging.info("Subscribed to SPATEM topic with QoS=0")
     else:
         logging.error(f"Failed to connect, return code {rc}")
 
@@ -204,10 +201,11 @@ client.on_connect = on_connect
 client.on_disconnect = on_disconnect
 client.on_message = on_message
 
-client.connect(MQTT_BROKER, MQTT_PORT, keepalive=15)
+client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
 
 # === Main Loop ===
 if __name__ == "__main__":
+    print("====================== OBU Normal 1 ======================")
     client.loop_start()
     
     try:

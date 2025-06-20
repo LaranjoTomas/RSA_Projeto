@@ -1,7 +1,7 @@
 {
     "management": {
         "actionID": {
-            "originatingStationID": 1,
+            "originatingStationID": 112,
             "sequenceNumber": 0
         },
         "detectionTime": 1626453837.658,
@@ -20,13 +20,13 @@
             }
         },
         "validityDuration": 120,
-        "stationType": 15
+        "stationType": 10
     },
     "situation": {
         "informationQuality": 7,
         "eventType": {
-            "causeCode": 14,
-            "subCauseCode": 14
+            "causeCode": 95,
+            "subCauseCode": 1
         }
     }
 }

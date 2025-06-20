@@ -117,7 +117,7 @@ def publish_cam():
 
     payload = json.dumps(cam_msg)
 
-    info = client.publish(CAM_MQTT_TOPIC, payload, qos=1)
+    info = client.publish(CAM_MQTT_TOPIC, payload, qos=0)
     
     if info.rc == mqtt.MQTT_ERR_SUCCESS:
         print(f"Sent CAM message to `{CAM_MQTT_TOPIC}`: pos=({cam_msg['latitude']:.7f}, {cam_msg['longitude']:.7f})")
@@ -142,7 +142,7 @@ def publish_denm():
             }
     
     payload = json.dumps(denm_msg)
-    info = client.publish(DENM_MQTT_TOPIC, payload, qos=1)
+    info = client.publish(DENM_MQTT_TOPIC, payload, qos=0)
     if info.rc == mqtt.MQTT_ERR_SUCCESS:
         print(f"Sent DENM to `{DENM_MQTT_TOPIC}` (heading={heading})")
     else:
@@ -152,8 +152,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(m
 
 # === MQTT Setup ===
 
-client_id = f"ambulance_obu_{uuid.uuid4()}"
-client = mqtt.Client(client_id=client_id)
+client = mqtt.Client(client_id="ambulance_obu_1", clean_session=False)
 
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
@@ -168,6 +167,7 @@ client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
 last_dist = None
 
 if __name__ == "__main__":
+    print("====================== OBU Ambulance 1 ======================")
     client.loop_start()
     try:
         while True:

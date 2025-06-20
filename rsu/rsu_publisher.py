@@ -35,7 +35,7 @@ def load_json(filepath):
         return json.load(file)
 
 # === MQTT Setup ===
-client = mqtt.Client(client_id=f"rsu_publisher_{int(time.time())}")
+client = mqtt.Client(client_id=f"rsu_publisher_1")
 
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
@@ -75,7 +75,7 @@ client.on_connect = on_connect
 client.on_disconnect = on_disconnect
 client.on_message = on_message
 
-client.connect(MQTT_BROKER, MQTT_PORT, keepalive=15)
+client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
 
 client.subscribe("vanetza/out/denm")
 
@@ -183,13 +183,13 @@ def publish_spatem():
     
     payload = json.dumps(spatem_msg)
 
-    result = client.publish(SPATEM_MQTT_TOPIC, payload)
-    status = result[0]
+    # result = client.publish(SPATEM_MQTT_TOPIC, payload)
+    # status = result[0]
 
-    if status == 0:
-        print(f"Sent SPATEM message to topic `{SPATEM_MQTT_TOPIC}`")
-    else:
-        print(f"Failed to send message to topic `{SPATEM_MQTT_TOPIC}`")
+    # if status == 0:
+    #     print(f"Sent SPATEM message to topic `{SPATEM_MQTT_TOPIC}`")
+    # else:
+    #     print(f"Failed to send message to topic `{SPATEM_MQTT_TOPIC}`")
         
     result2 = client.publish(SPATEM_MQTT_TOPIC2, payload)
     status2 = result2[0]
@@ -232,13 +232,14 @@ def update_spatem(spatem_msg, lights):
 
 # === Main Loop ===
 if __name__ == "__main__":
+    print("====================== RSU Publisher 1 ======================")
     client.loop_start()
     try:
         while True:
             if ensure_connection():
                 publish_spatem()
                 mapem_counter += 1
-                if mapem_counter == 1:
+                if mapem_counter == 10:
                     publish_cam()
                     publish_mapem()
                     mapem_counter = 0
